@@ -1,0 +1,70 @@
+version: '3.7'
+services:
+  iris:
+    image: intersystemsdc/iris-community:latest
+    ports:
+      - "5274:52774"  # Management Portal
+      - "1973:1972"   # IRIS SuperServer port
+    environment:
+      - IRIS_USERNAME=_SYSTEM
+      - IRIS_PASSWORD=SYS
+    volumes:
+      - iris_data:/durable
+    healthcheck:
+      test: ["CMD-SHELL", "iris session iris -U %SYS \"write $system.Version.GetVersion(), $system.Process.Compile('/firewall/Firewall.inc'),!\""]
+      interval: 10s
+      retries: 3
+      start_period: 30s
+      timeout: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - iris
+    environment:
+      - IRIS_HOSTNAME=iris
+      - IRIS_PORT=1972
+      - IRIS_NAMESPACE=USER
+      - IRIS_USERNAME=_SYSTEM
+      - IRIS_PASSWORD=SYS
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SYMPTOM_MATCHER_MODEL=gpt-3.5-turbo
+      - LOG_LEVEL=INFO
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+      - ./.env:/app/.env
+    command: uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
+
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8888:8888"
+    depends_on:
+      - iris
+    environment:
+      - IRIS_HOSTNAME=iris
+      - IRIS_PORT=1972
+      - IRIS_NAMESPACE=USER
+      - IRIS_USERNAME=_SYSTEM
+      - IRIS_PASSWORD=SYS
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SYMPTOM_MATCHER_MODEL=gpt-3.5-turbo
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./notebooks:/app/notebooks
+      - ./scripts:/app/scripts
+      - ./.env:/app/.env
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password='' --notebook-dir=/app/notebooks
+
+volumes:
+  iris_data:

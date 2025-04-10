@@ -3,6 +3,7 @@ Symptom matching to CTCAE terminology.
 """
 import os
 import logging
+import json
 from typing import Dict, List, Any, Optional, Tuple
 
 from langchain.docstore.document import Document
@@ -10,7 +11,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.chains import LLMChain
 from langchain_openai import ChatOpenAI
 
-from src.vectorstore import setup_iris_vectorstore, search_term_store
+from src.vectorstore import search_term_store, setup_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class SymptomMatcher:
             collection_name: Name of the vector collection
             model_name: LLM model name to use
         """
-        self.vector_store = setup_iris_vectorstore(collection_name=collection_name)
+        self.vector_store = setup_vector_store(collection_name=collection_name)
         self.llm = ChatOpenAI(model_name=model_name, temperature=0)
 
         # Create matching prompt
@@ -54,14 +55,14 @@ class SymptomMatcher:
             3. Provide rationale for your selection
 
             Return your response in this JSON format:
-            {
+            {{
               "ctcae_term": "The matched CTCAE term",
               "grade": "The grade as a number (1-5)",
               "grade_description": "The official description for this grade",
               "meddra_soc": "The MedDRA system organ class",
               "confidence": "high/medium/low",
               "rationale": "Your explanation"
-            }
+            }}
             """
         )
 
@@ -123,26 +124,46 @@ class SymptomMatcher:
         context = "\n\n".join(context_parts)
 
         # Step 3: Use LLM to make the final match
-        chain = LLMChain(llm=self.llm, prompt=self.matching_prompt)
-
         try:
-            # Extract symptoms using LLM
+            # Extract symptoms using LLM chain
+            chain = LLMChain(llm=self.llm, prompt=self.matching_prompt)
             response = chain.run(symptom=symptom, details=details, context=context)
 
-            # Parse JSON response
-            import json
-            result = json.loads(response.strip())
+            # Clean up the response - sometimes the LLM adds extra text before or after the JSON
+            response = response.strip()
 
-            # Add original symptom to result
-            result["original_symptom"] = symptom
-            if details:
-                result["details"] = details
+            # Try to find JSON content between curly braces
+            start_idx = response.find('{')
+            end_idx = response.rfind('}')
 
-            return result
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                json_str = response[start_idx:end_idx + 1]
+                try:
+                    # Parse the JSON response
+                    result = json.loads(json_str)
+
+                    # Add original symptom to result
+                    result["original_symptom"] = symptom
+                    if details:
+                        result["details"] = details
+
+                    return result
+                except json.JSONDecodeError as e:
+                    logger.error(f"Error parsing JSON response: {e}")
+                    logger.error(f"JSON string: {json_str}")
+
+            # If we can't parse valid JSON, return a default response with error info
+            return {
+                "original_symptom": symptom,
+                "details": details if details else None,
+                "error": "Failed to parse LLM response as JSON",
+                "raw_response": response
+            }
 
         except Exception as e:
             logger.error(f"Error matching symptom: {e}")
             return {
                 "original_symptom": symptom,
+                "details": details if details else None,
                 "error": str(e)
             }

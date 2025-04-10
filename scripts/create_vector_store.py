@@ -7,12 +7,30 @@ import sys
 import json
 import logging
 from pathlib import Path
+import dotenv
 
 # Add parent directory to path to import src modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.vectorstore import setup_iris_vectorstore, add_terms_to_vectorstore
 from src.utils import configure_logging
+
+# Load environment variables from .env file
+env_path = Path('.env')
+if env_path.exists():
+    dotenv.load_dotenv(env_path)
+    print("Loaded environment variables from .env file")
+else:
+    print("Warning: .env file not found")
+
+# Check if the OpenAI API key is set
+openai_api_key = os.getenv('OPENAI_API_KEY')
+if not openai_api_key:
+    print("Warning: OPENAI_API_KEY environment variable is not set")
+else:
+    print("OpenAI API key is set")
+
+# Set the environment variable to allow iris import to work with containerized IRIS
+os.environ['IRISINSTALLDIR'] = '/usr'
 
 # Path to processed CTCAE data
 CTCAE_PATH = Path("data/ctcae_processed.json")
@@ -28,6 +46,9 @@ def create_vector_store():
         return False
 
     try:
+        # Import here to avoid circular imports
+        from src.vectorstore import setup_vector_store, add_terms_to_vectorstore
+
         # Load CTCAE data
         with open(CTCAE_PATH, 'r') as f:
             ctcae_data = json.load(f)
@@ -38,9 +59,11 @@ def create_vector_store():
             return False
 
         print(f"Setting up vector store for {len(terms)} CTCAE terms...")
-        # Initialize vector store
-        vectorstore = setup_iris_vectorstore(
+
+        # Initialize vector store with direct connection parameters
+        vectorstore = setup_vector_store(
             collection_name="ctcae_terms",
+            connection_string=None,  # Will use default connection string
             reset_collection=True
         )
 
@@ -51,6 +74,8 @@ def create_vector_store():
         return True
     except Exception as e:
         print(f"Error creating vector store: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
